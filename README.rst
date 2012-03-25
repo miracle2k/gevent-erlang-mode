@@ -10,6 +10,8 @@ some Erlang-style concepts, ported to gevent_.
 The Mailbox
 -----------
 
+::
+
     from erlangmode import Mailbox
 
     process = Mailbox()
@@ -26,6 +28,8 @@ See module documentation for more.
 
 Utilities
 ---------
+
+::
 
     from erlangmode import send_after
     timer = send_after(10, mailbox, 'message')
