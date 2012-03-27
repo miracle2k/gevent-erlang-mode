@@ -186,8 +186,11 @@ class Mailbox(object):
         self._old_save_queues = []
 
     def __lshift__(self, other):
-        self._mailbox.put(other)
+        self.receive_message(other)
         return self
+
+    def receive_message(self, message):
+        self._mailbox.put(message)
 
     def __iter__(self):
         # Install a new save queue. We need to have a list of those, because
