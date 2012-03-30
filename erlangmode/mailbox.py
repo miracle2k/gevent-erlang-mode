@@ -112,9 +112,10 @@ http://www.python.org/dev/peps/pep-0377/
 
 import time
 from gevent.queue import Queue, Empty
+import types
 
 
-__all__ = ('Mailbox',)
+__all__ = ('Mailbox', 'Matcher')
 
 
 # Special message value being passed around for timeout support.
@@ -128,7 +129,13 @@ class TIMEOUT(object):
 class Matcher(object):
     """Helper that matches a wrapped message against a clause.
 
-    An instance of this is what you'll have in ``receive``.
+    An instance of this is what you'll get when iterating over a mailbox.
+    However, you may also be interested in using this class manually if you
+    want to do message matching in a different way::
+
+        match = Matcher(message)
+        if match('a'):
+            pass
     """
 
     def __init__(self, message):
@@ -169,8 +176,9 @@ class Matcher(object):
             if isinstance(self.message, TIMEOUT):
                 return False
 
-            if args == (self.message,):
-                self.match = None
+            groups = match(args, tuplify(self.message))
+            if not groups is None:
+                self.match = groups
                 self._consumed = True
                 return True
             return False
@@ -252,5 +260,41 @@ class Mailbox(object):
                 self._save_queue.put(message)
 
 
+tuplify = lambda v: v if isinstance(v, tuple) else (v,)
 
+
+def match(pattern, message):
+    """Match ``message`` against ``pattern``, returns either ``None``
+    if no match, or a list of matched classes.
+    """
+    assert isinstance(pattern, tuple) and isinstance(message, tuple)
+
+    if len(pattern) != len(message):
+        return None
+
+    groups = []
+    for p, m in zip(pattern, message):
+        if isinstance(p, (types.ClassType, type)):
+            if isinstance(m, p):
+                groups.append(m)
+                continue
+        if p is m:
+            continue
+        if p == m:
+            continue
+        if isinstance(p, dict) and isinstance(m, dict):
+            for key, value in p.items():
+                if not key in m:
+                    break
+                g = match(tuplify(value), tuplify(m[key]))
+                if g is None:
+                    break
+                groups.extend(g)
+            else:
+                continue
+
+        # A pair did not match, so the whole match fails.
+        return None
+
+    return tuple(groups)
 

@@ -1,5 +1,6 @@
 import gevent
 from erlangmode import Mailbox
+from erlangmode.mailbox import match
 from base import *
 
 
@@ -84,7 +85,7 @@ class TestReceive(object):
         for receive in mb:
             if receive('a'):
                 assert receive.message == 'a'
-                assert receive.match == None
+                assert receive.match == ()
                 break
 
     def test_block(self):
@@ -166,3 +167,60 @@ class TestReceive(object):
 class TestMatching(object):
     """Test the specific matching.
     """
+
+    def test_different_lengths(self):
+        assert match((5, 4, 'sdf'), (int, int, str, int)) is None
+
+    def test_ident_objects(self):
+        """``is`` ident check causes a match."""
+        obj = object()
+        assert match((obj,), (obj,)) == ()
+        assert match((obj,), (object(),)) is None
+
+    def test_equality(self):
+        """== check causes a match."""
+        class any(object):
+            def __eq__(self, other):
+                return True
+        assert match((any(),), (5,)) == ()
+
+        # Long strings do not match with ``is``.
+        assert match(('abc'*1000,), ('abc'*1000,)) == ()
+
+    def test_class_capture(self):
+        """Capturing values by matching against a class pattern."""
+        assert match((int,), (5,)) == (5,)
+        assert match((int,), (int,)) == ()
+
+        # Multiple matches
+        assert match(('a', int, int), ('a', 5, 7)) == (5, 7)
+
+        # object can be used to match many things
+        assert match((object, object, object), (5, 'foo', {})) == (5, 'foo', {})
+
+    def test_class_type(self):
+        """Test that old-style classes work."""
+        class Foo:
+            pass
+        foo = Foo()
+        assert match((Foo,), (foo,)) == (foo,)
+
+    def test_dict(self):
+        """dicts have special handling."""
+
+        # It's ok if message has more items than pattern
+        assert match(({},), ({'foo': 'bar'},)) == ()
+
+        # But message must have all items that pattern does
+        assert match(({'foo': 'bar'},), ({},)) is None
+        assert match(({'foo': 'bar'},), ({'foo': 'bar'},)) == ()
+
+        # And those items have to match as well
+        assert match(({'foo': 'bar'},), ({'foo': 'baz'},)) is None
+
+        # Class placeholders are supported in dicts as well
+        assert match(({'foo': str},), ({'foo': 'bar'},)) == ('bar',)
+
+        # dicts can be nested
+        assert match(({'spam': {'ham': str}},),
+            ({'spam': {'ham': 'eggs'}},)) == ('eggs',)
