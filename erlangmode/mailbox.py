@@ -7,13 +7,7 @@ Sending messages happens via the bitwise ``shift left`` operator::
     process << (True, 5)
     process << dict(command='exit')
     process << 'reload', {'timeout': 5}
-
-.. note:
-
-   An alternative syntax that could have been used is the bitwise ``or``
-   operator::
-
-        process | 5
+    process << 1 << 2 << 3
 
 
 Matching messages in the mailbox::
@@ -24,6 +18,7 @@ Matching messages in the mailbox::
         if receive(int, int):
             a, b = receive.match
             break
+
 
 Notice the ``break`` in the above example. The semantics are not identical to
 Erlang: In Erlang, after a single clause matches, the receive statement ends,
@@ -44,6 +39,21 @@ So specifically, the process is:
    unmatched), block the greenlet until new messages arrive, or the timeout
    triggers.
 
+
+A thing that Erlang cannot do: Since we have shared state, you can receive an
+immediate result from the message processor::
+
+    result = mailbox | 5
+    result.get()
+
+``result`` is a ``gevent`` ``ASyncResult`` instance. By using ``|`` instead of
+``<<`` you will get such an object. ``get()`` blocks the current greenlet until
+the message has been processed. The return value will be ``None``, or a value
+set by the mailbox processor::
+
+    for receive in mailbox:
+        if receive(str):
+            receive.respond('Hello, %s' % receive.message)
 
 Matching is rather full featured. If a class is given, an instance of the
 class is expected. Other values needs to match exactly::
@@ -111,11 +121,12 @@ http://www.python.org/dev/peps/pep-0377/
 """
 
 import time
-from gevent.queue import Queue, Empty
 import types
+from gevent.event import AsyncResult
+from gevent.queue import Queue, Empty
 
 
-__all__ = ('Mailbox', 'Matcher')
+__all__ = ('Mailbox', 'Matcher', 'MessageReceiver')
 
 
 # Special message value being passed around for timeout support.
@@ -141,6 +152,7 @@ class Matcher(object):
     def __init__(self, message):
         self.message = message
         self._consumed = False
+        self._response = None
 
     def __call__(self, *args, **kwargs):
         timeout_seconds = kwargs.pop('timeout', None)
@@ -183,8 +195,37 @@ class Matcher(object):
                 return True
             return False
 
+    def respond(self, value):
+        self._response = value
+        self._consumed = True
 
-class Mailbox(object):
+
+class MessageReceiver(object):
+
+    def __lshift__(self, other):
+        """<< syntax to add a message to the mailbox::
+
+            mailbox << 1 << 2 << 3
+        """
+        self.receive_message(other)
+        return self
+
+    def __or__(self, other):
+        """| syntax to add a message to a mailbox and get an ``ASyncResult``
+        instance that triggers when the message has been processed::
+
+            result = mailbox | 1
+            result.get()
+       """
+        result = AsyncResult()
+        self.receive_message(other, responder=result)
+        return result
+
+    def receive_message(self, message, responder=None):
+        raise NotImplementedError()
+
+
+class Mailbox(MessageReceiver):
     """Implements an Erlang-like mailbox.
     """
 
@@ -193,14 +234,43 @@ class Mailbox(object):
         self._save_queue = Queue()
         self._old_save_queues = []
 
-    def __lshift__(self, other):
-        self.receive_message(other)
-        return self
-
-    def receive_message(self, message):
-        self._mailbox.put(message)
+    def receive_message(self, message, responder=None):
+        self._mailbox.put((responder, message))
 
     def __iter__(self):
+        """The design challenge is this: In order to be able to trigger the
+        ``ASyncResult`` event for a message being processed, as we might have
+        to if a ``responder`` is set, even if the user does not explicitly sets
+        a value, we need a way to run code after the yield. Here are the
+        options:
+
+        1) If PEP 377 had been accepted, we could use the ``with`` statement,
+           and could could run in __exit__. Alas, this is not the case.
+
+        2) try....finally could be used. However, finally in iterators is
+           peculiar, and has I understand it, should the generator not be
+           immediately garbage collected (a global variable, circular
+           reference), then the time at which ``finally`` is executed would be
+           undefined.
+
+        3) Remove the need/support for an explicit ``break``. Then, we can
+           always expect the generator to return after a yield, until such time
+           that we exit manually (like after the first match). However,
+           NOT stopping the loop after a match is one of the modes we want to
+           support, and for performance, to do so without rematching already
+           dismissed messages (otherwise, putting everything inside a ``while``
+           loop might suffice). A possible approach would be to define a
+           separate ``.all`` iterator::
+
+                for receive in mailbox:
+                    if receive():
+                        pass  # stop automatically after a match
+
+                for receive in mailbox.all:
+                    if receive():
+                        pass  #  does not stop after a match
+        """
+
         # Install a new save queue. We need to have a list of those, because
         # we cannot run any code after a ``break``. Thus, we cannot be sure
         # that this __iter__ will even empty the current save queue fully.
@@ -221,7 +291,7 @@ class Mailbox(object):
         timeout_used = 0
         while True:
             try:
-                message = queue().get_nowait()
+                responder, message = queue().get_nowait()
             except Empty:
                 # The first time we need the timeout, yield a matcher with a
                 # special internal value. If there is a clause that defines
@@ -240,7 +310,7 @@ class Mailbox(object):
                     if actual_timeout == 0:
                         block = False
                         actual_timeout = None
-                    message = queue().get(timeout=actual_timeout, block=block)
+                    responder, message = queue().get(timeout=actual_timeout, block=block)
                 except Empty:
                     # Timeout failed, run the timeout clause, by handing
                     # down a special object.
@@ -250,14 +320,18 @@ class Mailbox(object):
                     return
                 else:
                     timeout_used += (time.time() - start)
-                    print timeout_used
 
-            # Hand down the message
-            matcher = Matcher(message)
-            yield matcher
-            if not matcher._consumed:
-                # Remember for the next time the mailbox is iterated.
-                self._save_queue.put(message)
+            try:
+                # Hand down the message
+                matcher = Matcher(message)
+                yield matcher
+            finally:
+                if not matcher._consumed:
+                    # Remember for the next time the mailbox is iterated.
+                    self._save_queue.put((responder, message))
+                elif responder:
+                    responder.set(matcher._response)
+
 
 
 tuplify = lambda v: v if isinstance(v, tuple) else (v,)

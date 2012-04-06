@@ -1,23 +1,32 @@
 import gevent
+from gevent.timeout import Timeout
+from nose.tools import assert_raises
 from erlangmode import Mailbox
 from erlangmode.mailbox import match
 from base import *
 
 
-def test_send():
-    mb = Mailbox()
-    mb << 5
-    mb << ('bla', 'foo')
-    assert mb._mailbox.get_nowait() == 5
-    assert mb._mailbox.get_nowait() == ('bla', 'foo')
+class TestSend(object):
+    """Adding messages to a mailbox."""
 
+    def test(self):
+        mb = Mailbox()
+        mb << 5
+        mb << ('bla', 'foo')
+        assert mb._mailbox.get_nowait() == (None, 5)
+        assert mb._mailbox.get_nowait() == (None, ('bla', 'foo'))
 
-def multi_send():
-    mb = Mailbox()
-    mb << 5 << 6 << 7
-    assert mb._mailbox.get_nowait() == 5
-    assert mb._mailbox.get_nowait() == 6
-    assert mb._mailbox.get_nowait() == 7
+    def test_multi(self):
+        mb = Mailbox()
+        mb << 5 << 6 << 7
+        assert mb._mailbox.get_nowait() == (None, 5)
+        assert mb._mailbox.get_nowait() == (None, 6)
+        assert mb._mailbox.get_nowait() == (None, 7)
+
+    def test_with_responder(self):
+        mb = Mailbox()
+        async_result = mb | 1
+        assert mb._mailbox.get_nowait() == (async_result, 1)
 
 
 class TestReceive(object):
@@ -52,13 +61,13 @@ class TestReceive(object):
         assert received == ['a', 'c']
         # b and the second a remain in the mailbox/savequeue
         assert mb._save_queue.qsize() == 1
-        assert mb._save_queue.get_nowait() == 'b'
+        assert mb._save_queue.get_nowait() == (None, 'b')
         assert mb._mailbox.qsize() == 1
-        assert mb._mailbox.get_nowait() == 'a'
+        assert mb._mailbox.get_nowait() == (None, 'a')
 
     def test_save_queue(self):
         mb = Mailbox()
-        mb._save_queue.put('a')
+        mb._save_queue.put((None, 'a'))
         mb << 'b' << 'c'
 
         received = []
@@ -70,11 +79,10 @@ class TestReceive(object):
                 break
 
         # a was taken from save queue, c from mailbox
-        print received
         assert received == ['a', 'c']
         # b was not matched and is the new content of the save queue
         assert mb._save_queue.qsize() == 1
-        assert mb._save_queue.get_nowait() == 'b'
+        assert mb._save_queue.get_nowait() ==(None, 'b')
         assert mb._mailbox.qsize() == 0
 
     def test_match(self):
@@ -162,6 +170,49 @@ class TestReceive(object):
             if receive(timeout=STEP):
                 pass
         assert True
+
+    def test_responding(self):
+        """Test async result of message being processed."""
+        mb = Mailbox()
+        def loop():
+            for receive in mb:
+                if receive(object, object):
+                    value, sleep = receive.match
+                    gevent.sleep(sleep)
+                    if value:
+                        receive.respond(value*2)
+                    else:
+                        break
+                if receive(): raise ValueError()
+        gl = gevent.spawn_link_exception(loop)
+
+        # Return a value
+        assert (mb | (5, 0)).get() == 10
+
+        # Return a value not soon enough
+        assert_raises(Timeout, (mb | (5, STEP*2)).get, timeout=STEP) == 10
+
+        # Default value is returned if respond() not explicitly called
+        assert (mb | (False, 0)).get() is None
+
+        gl.kill()
+
+    def test_responding_implicitly(self):
+        """Test hat we get a `message processed` response even if
+       the receive loop does not set a value AND breaks, without calling
+       the generator again.
+       """
+        mb = Mailbox()
+        def loop():
+            for receive in mb:
+                if receive():
+                    break
+        gl = gevent.spawn_link_exception(loop)
+
+        # Default value is returned if respond() not explicitly called
+        assert (mb | (False, 0)).get() is None
+
+        gl.kill()
 
 
 class TestMatching(object):
