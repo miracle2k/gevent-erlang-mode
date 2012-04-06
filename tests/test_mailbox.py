@@ -224,3 +224,8 @@ class TestMatching(object):
         # dicts can be nested
         assert match(({'spam': {'ham': str}},),
             ({'spam': {'ham': 'eggs'}},)) == ('eggs',)
+
+    def test_catch_all(self):
+        """An empty pattern means match all."""
+        assert match((), (1,)) == ()
+        assert match((), ('sdf', 1, 2, 3, {'a': 'b'})) == ()

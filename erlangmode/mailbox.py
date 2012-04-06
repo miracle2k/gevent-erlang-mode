@@ -269,6 +269,10 @@ def match(pattern, message):
     """
     assert isinstance(pattern, tuple) and isinstance(message, tuple)
 
+    # Indicates "match all".
+    if pattern == ():
+        return ()
+
     if len(pattern) != len(message):
         return None
 
