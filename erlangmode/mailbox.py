@@ -304,6 +304,7 @@ class Mailbox(MessageReceiver):
                 # Try again with a timeout:
                 start = time.time()
                 try:
+                    # TODO: How about using a `Timeout` instead of this arithmetic.
                     block = True
                     actual_timeout = max(timeout.seconds - timeout_used, 0) \
                         if timeout.seconds is not None else None
