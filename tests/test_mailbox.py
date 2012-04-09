@@ -184,7 +184,7 @@ class TestReceive(object):
                     else:
                         break
                 if receive(): raise ValueError()
-        gl = gevent.spawn_link_exception(loop)
+        gl = gevent.spawn(loop)
 
         # Return a value
         assert (mb | (5, 0)).get() == 10
@@ -207,7 +207,7 @@ class TestReceive(object):
             for receive in mb:
                 if receive():
                     break
-        gl = gevent.spawn_link_exception(loop)
+        gl = gevent.spawn(loop)
 
         # Default value is returned if respond() not explicitly called
         assert (mb | (False, 0)).get() is None
