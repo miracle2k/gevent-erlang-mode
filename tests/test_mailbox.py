@@ -1,7 +1,7 @@
 import gevent
 from gevent.timeout import Timeout
 from nose.tools import assert_raises
-from erlangmode import Mailbox
+from erlangmode import Mailbox, Actor
 from erlangmode.mailbox import match
 from base import *
 
@@ -280,3 +280,13 @@ class TestMatching(object):
         """An empty pattern means match all."""
         assert match((), (1,)) == ()
         assert match((), ('sdf', 1, 2, 3, {'a': 'b'})) == ()
+
+
+class TestActor(object):
+
+    def test(self):
+        actor = Actor()
+        actor << 1
+        responder = actor | 2
+        assert actor.mailbox._mailbox.get_nowait() == (None, 1)
+        assert actor.mailbox._mailbox.get_nowait() == (responder, 2)

@@ -126,7 +126,7 @@ from gevent.event import AsyncResult
 from gevent.queue import Queue, Empty
 
 
-__all__ = ('Mailbox', 'Matcher', 'MessageReceiver')
+__all__ = ('Mailbox', 'Actor', 'Matcher', 'MessageReceiver')
 
 
 # Special message value being passed around for timeout support.
@@ -377,3 +377,14 @@ def match(pattern, message):
 
     return tuple(groups)
 
+
+class Actor(MessageReceiver):
+    """An object that can be sernt messages directly (using the << and |
+    operators, but exposes them via a ``mailbox`` attribute.
+    """
+
+    def __init__(self):
+        self.mailbox = Mailbox()
+
+    def receive_message(self, message, responder=None):
+        self.mailbox.receive_message(message, responder)
