@@ -30,4 +30,5 @@ def spawn_and_link(func):
     parent = gevent.getcurrent()
     g = gevent.spawn(func)
     g.link_exception(receiver=lambda failed: gevent.kill(parent, LinkedFailed(failed)))
+    return g
 
