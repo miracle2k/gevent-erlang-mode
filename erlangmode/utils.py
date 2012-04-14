@@ -16,13 +16,17 @@ if gevent.__version__ <= '0.13.6':
             self._schedule()
 
         def _schedule(self):
-            self._timer = gevent.core.timer(self._seconds, self._callable)
+            if self._seconds is not None:
+                self._timer = gevent.core.timer(self._seconds, self._callable)
+            else:
+                self._timer = None
 
         def cancel(self):
-            self._timer.cancel()
+            if self._timer:
+                self._timer.cancel()
 
         def reset(self):
-            self._timer.cancel()
+            self.cancel()
             self._schedule()
 
 
@@ -40,11 +44,15 @@ else:
             # We need to create an entirely new timer, because it seems
             # that otherwise, the timer is NOT reset between a stop() and
             # start() call.
-            self._timer = gevent.get_hub().loop.timer(self._seconds)
-            self._timer.start(self._callable)
+            if self._seconds is not None:
+                self._timer = gevent.get_hub().loop.timer(self._seconds)
+                self._timer.start(self._callable)
+            else:
+                self._timer = None
 
         def cancel(self):
-            self._timer.stop()
+            if self._timer:
+                self._timer.stop()
 
         def reset(self):
             # There is a self.timer again method which is based on
@@ -61,6 +69,6 @@ def send_after(seconds, mailbox, message):
 
     Returns a ``Timer`` object that allows the event to be canceled and reset.
     """
-    if not seconds >= 0:
+    if seconds is not None and not seconds >= 0:
         raise IOError(22, 'Invalid argument')
     return Timer(seconds, lambda: mailbox << message)

@@ -30,3 +30,12 @@ class TestSendAfter(object):
         step(); assert mb._mailbox.qsize() == 0
         step(); assert mb._mailbox.qsize() == 1
 
+    def test_none_value(self):
+        """If timeout is None, the timer is a noop."""
+        mb = Mailbox()
+        t = send_after(None, mb, 42)
+        step(); assert mb._mailbox.qsize() == 0
+        t.reset()
+        t.cancel()
+        step(); assert mb._mailbox.qsize() == 0
+
