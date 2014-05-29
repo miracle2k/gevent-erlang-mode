@@ -1,7 +1,7 @@
 import gevent
 
 
-__all__ = ('LinkedFailed', 'spawn_and_link')
+__all__ = ('LinkedFailed', 'spawn_and_link', 'link_exception')
 
 
 class LinkedFailed(Exception):
@@ -18,7 +18,7 @@ class LinkedFailed(Exception):
         Exception.__init__(self, self.msg % (source, excname, exception))
 
 
-def spawn_and_link(func):
+def spawn_and_link(func, *a, **kw):
     """Spawn as a greenlet, and link to current greenlet.
 
     If the spawned greenlet exits abnormally (with an exception), then a
@@ -27,8 +27,16 @@ def spawn_and_link(func):
     Gevent used to have this functionality built in, but it was removed:
     https://groups.google.com/d/topic/gevent/gZF5HcR1VqI/discussion
     """
+    g = gevent.spawn(func, *a, **kw)
+    return link_exception(g)
+
+
+def link_exception(greenlet):
+    """If the given greenlet exits abnormally (with an exception), then a
+    ``LinkedFailed`` exception will be raised in the linked greenlet.
+    """
     parent = gevent.getcurrent()
-    g = gevent.spawn(func)
-    g.link_exception(receiver=lambda failed: gevent.kill(parent, LinkedFailed(failed)))
-    return g
+    greenlet.link_exception(
+        receiver=lambda failed: gevent.kill(parent, LinkedFailed(failed)))
+    return greenlet
 
