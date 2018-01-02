@@ -162,6 +162,7 @@ class Matcher(object):
         if self._consumed:
             return False
 
+        # If this call defines the timeout clause...
         if timeout_seconds is not None:
             assert not args, 'The timeout-clause may not attempt to '\
                 'match against the message'
@@ -183,6 +184,8 @@ class Matcher(object):
             timeout.seconds = timeout_seconds
             # Don't match the clause yet.
             return False
+
+        # This call is a regular match attempt...
         else:
             # Ignore our special timeout messages
             if isinstance(self.message, TIMEOUT):
@@ -194,6 +197,22 @@ class Matcher(object):
                 self._consumed = True
                 return True
             return False
+
+    @property
+    def is_active(self):
+        """True if this matcher is matching against a real message,
+        as opposed to internal loop-runs of this module.
+
+        Checking this allows complicated use-cases, such as:
+
+            for receive in mailbox:
+                if receive():
+                    pass
+
+                if receive.is_active:
+                    print('just processed a message')
+        """
+        return not isinstance(self.message, TIMEOUT)
 
     def respond(self, value):
         self._response = value
@@ -294,14 +313,15 @@ class Mailbox(MessageReceiver):
                 responder, message = queue().get_nowait()
             except Empty:
                 # The first time we need the timeout, yield a matcher with a
-                # special internal value. If there is a clause that defines
-                # a timeout (the matcher being called with a timeout value),
-                # then we will know when we return.
+                # special internal value. If there is a timeout-clause, then
+                # it will match this special value and tell us what the
+                # timeout is.
                 if not timeout:
                     timeout = TIMEOUT()
                     yield Matcher(timeout)
 
-                # Try again with a timeout:
+                # We now know the timeout value, the matcher wrote it to
+                # the special object we passed down.
                 start = time.time()
                 try:
                     # TODO: How about using a `Timeout` instead of this arithmetic.
@@ -313,8 +333,9 @@ class Mailbox(MessageReceiver):
                         actual_timeout = None
                     responder, message = queue().get(timeout=actual_timeout, block=block)
                 except Empty:
-                    # Timeout failed, run the timeout clause, by handing
-                    # down a special object.
+                    # Read timed out. To run the timeout clause, we
+                    # yield a special object, which the timeout matcher
+                    # will trigger on.
                     assert timeout.seconds is not None
                     yield Matcher(TIMEOUT(run=True))
                     # And we are done.
